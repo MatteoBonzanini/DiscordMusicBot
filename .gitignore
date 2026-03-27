@@ -1,4 +1,4 @@
-src/node_modules/
-src/logs/
-src/.env
-src/yt-dlp.exe
+Bot/src/node_modules/
+Bot/src/logs/
+Bot/src/.env
+Bot/src/yt-dlp.exe
