@@ -1,0 +1,9 @@
+Go to the following link 
+
+https://github.com/yt-dlp/yt-dlp
+
+Install
+RELEASE FILES
+yt-dlp.exe	Windows (Win8+) standalone x64 binary (recommended for Windows)
+
+After install move yt-dlp.exe inside /src directory
