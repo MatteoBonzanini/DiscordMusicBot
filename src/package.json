@@ -1,6 +1,7 @@
 {
   "name": "discord-music-bot",
   "version": "1.0.0",
+  "type": "module",
   "description": "A simple Discord bot to play music from YouTube",
   "main": "bot.js",
   "scripts": {

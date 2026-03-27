@@ -1,16 +1,23 @@
-process.env.FFMPEG_PATH = require("ffmpeg-static");
-require("dotenv").config();
 
-const {
+import ffmpegPath from 'ffmpeg-static';
+
+process.env.FFMPEG_PATH = ffmpegPath;
+
+import dotenv from 'dotenv';
+import { decrypt } from './cypher.js';
+
+dotenv.config();
+
+import {
   Client,
   GatewayIntentBits,
   SlashCommandBuilder,
-  REST,
-  Routes,
-  EmbedBuilder,
-} = require("discord.js");
+  REST, 
+  Routes, 
+  EmbedBuilder
+ } from "discord.js";
 
-const {
+import {
   joinVoiceChannel,
   createAudioPlayer,
   createAudioResource,
@@ -18,16 +25,15 @@ const {
   AudioPlayerStatus,
   VoiceConnectionStatus,
   entersState,
-} = require("@discordjs/voice");
+} from "@discordjs/voice";
 
-const { spawn, execSync } = require("child_process");
-const path = require("path");
-const ffmpegPath = require("ffmpeg-static");
-const ytDlpPath = path.join(__dirname, "yt-dlp.exe");
+import { spawn, execSync } from "child_process";
+import * as path from 'path';
+const ytDlpPath = path.join(import.meta.dirname, "yt-dlp.exe");
 
 // ─── Configuration ───────────────────────────────────────────────
-const TOKEN = process.env.DISCORD_TOKEN || "YOUR_BOT_TOKEN_HERE";
-const CLIENT_ID = process.env.CLIENT_ID || "YOUR_CLIENT_ID_HERE";
+const TOKEN = decrypt(process.env.CYPHER_DISCORD_TOKEN, process.env.CYPHER_IV, process.env.CYPHER_KEY) || "Insert your bot token here";
+const CLIENT_ID = process.env.CLIENT_ID || "Insert your client ID here";
 
 // ─── Bot Setup ───────────────────────────────────────────────────
 const client = new Client({
@@ -203,7 +209,7 @@ function getVideoInfo(input) {
 
 // ─── Events ──────────────────────────────────────────────────────
 
-client.once("ready", () => {
+client.once("clientReady", () => {
   console.log(`[OK] Bot online as ${client.user.tag}`);
 });
 
@@ -300,7 +306,7 @@ client.on("interactionCreate", async (interaction) => {
   else if (commandName === "skip") {
     const queue = getQueue(guildId);
     if (!queue || queue.songs.length === 0) {
-      return interaction.reply({ content: "❌ Non c'è nulla da saltare.", ephemeral: true });
+      return interaction.reply({ content: "❌ Non c'è nulla da saltare.", flags: MessageFlags.Ephemeral });
     }
     if (queue.currentProcess) {
       try { queue.currentProcess.kill(); } catch (e) {}
