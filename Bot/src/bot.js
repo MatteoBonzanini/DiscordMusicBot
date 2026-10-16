@@ -14,7 +14,8 @@ import {
   SlashCommandBuilder,
   REST, 
   Routes, 
-  EmbedBuilder
+  EmbedBuilder,
+  MessageFlags,
  } from "discord.js";
 
 import {
@@ -27,9 +28,18 @@ import {
   entersState,
 } from "@discordjs/voice";
 
-import { spawn, execSync } from "child_process";
+import { spawn, execFile } from "child_process";
 import * as path from 'path';
 const ytDlpPath = path.join(import.meta.dirname, "yt-dlp.exe");
+
+// YouTube requires a JS runtime to solve its challenges: reuse the Node running the bot
+const ytDlpBaseArgs = [
+  "--js-runtimes", `node:${process.execPath}`,
+  "--ffmpeg-location", ffmpegPath,
+  "--no-playlist",
+  "--no-update",
+  "--no-warnings",
+];
 
 // ─── Configuration ───────────────────────────────────────────────
 const TOKEN = decrypt(process.env.CYPHER_DISCORD_TOKEN, process.env.CYPHER_IV, process.env.CYPHER_KEY) || "Insert your bot token here";
@@ -111,13 +121,12 @@ function destroyQueue(guildId) {
 function createYTStream(url) {
   // Step 1: yt-dlp downloads and outputs raw audio to stdout
   const ytdlp = spawn(ytDlpPath, [
-    url,
+    ...ytDlpBaseArgs,
     "-f", "bestaudio",
-    "--ffmpeg-location", ffmpegPath,
-    "--no-playlist",
-    "--no-warnings",
     "-o", "-",
-  ]);
+    "--",
+    url,
+  ], { windowsHide: true });
 
   // Step 2: ffmpeg converts to Opus in OGG container (what Discord wants)
   const ffmpeg = spawn(ffmpegPath, [
@@ -136,7 +145,8 @@ function createYTStream(url) {
   ytdlp.stdout.pipe(ffmpeg.stdin);
 
   // Handle errors silently to prevent crashes
-  ytdlp.stderr.on("data", () => {});
+  let ytdlpErr = "";
+  ytdlp.stderr.on("data", (d) => { ytdlpErr += d; });
   ffmpeg.stderr.on("data", () => {});
   ytdlp.on("error", () => {});
   ffmpeg.on("error", () => {});
@@ -144,7 +154,8 @@ function createYTStream(url) {
   ffmpeg.stdin.on("error", () => {});
   ffmpeg.stdout.on("error", () => {});
 
-  ytdlp.on("close", () => {
+  ytdlp.on("close", (code) => {
+    if (code) console.error(`[yt-dlp] exited with code ${code}:\n${ytdlpErr.trim()}`);
     try { ffmpeg.stdin.end(); } catch (e) {}
   });
 
@@ -200,11 +211,21 @@ function formatDuration(seconds) {
 }
 
 function getVideoInfo(input) {
-  const result = execSync(
-    `"${ytDlpPath}" --dump-json --no-playlist --no-warnings --ffmpeg-location "${ffmpegPath}" "${input}"`,
-    { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024, timeout: 30000 }
-  );
-  return JSON.parse(result);
+  // Plain text is treated as a YouTube search, URLs are passed as-is
+  const query = /^https?:\/\//i.test(input) ? input : `ytsearch1:${input}`;
+  return new Promise((resolve, reject) => {
+    execFile(
+      ytDlpPath,
+      [...ytDlpBaseArgs, "--dump-json", "--", query],
+      { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024, timeout: 60000, windowsHide: true },
+      (err, stdout, stderr) => {
+        if (err) return reject(new Error(stderr?.trim() || err.message));
+        const line = stdout.trim().split("\n")[0];
+        if (!line) return reject(new Error("Nessun risultato trovato"));
+        resolve(JSON.parse(line));
+      }
+    );
+  });
 }
 
 // ─── Events ──────────────────────────────────────────────────────
@@ -221,7 +242,7 @@ client.on("interactionCreate", async (interaction) => {
   if (commandName === "play") {
     const voiceChannel = member.voice.channel;
     if (!voiceChannel) {
-      return interaction.reply({ content: "❌ Devi essere in un canale vocale!", ephemeral: true });
+      return interaction.reply({ content: "❌ Devi essere in un canale vocale!", flags: MessageFlags.Ephemeral });
     }
 
     await interaction.deferReply();
@@ -230,12 +251,12 @@ client.on("interactionCreate", async (interaction) => {
     let songInfo;
 
     try {
-      const info = getVideoInfo(input);
+      const info = await getVideoInfo(input);
       songInfo = {
         title: info.title,
         url: info.webpage_url || info.original_url,
         duration: formatDuration(info.duration),
-        thumbnail: info.thumbnail || "",
+        thumbnail: info.thumbnail || null,
       };
     } catch (err) {
       console.error("Error fetching video info:", err.message);
@@ -322,14 +343,14 @@ client.on("interactionCreate", async (interaction) => {
 
   else if (commandName === "pause") {
     const queue = getQueue(guildId);
-    if (!queue) return interaction.reply({ content: "❌ Non c'è nulla in riproduzione.", ephemeral: true });
+    if (!queue) return interaction.reply({ content: "❌ Non c'è nulla in riproduzione.", flags: MessageFlags.Ephemeral });
     queue.player.pause();
     interaction.reply("⏸️ Musica in pausa.");
   }
 
   else if (commandName === "resume") {
     const queue = getQueue(guildId);
-    if (!queue) return interaction.reply({ content: "❌ Non c'è nulla in pausa.", ephemeral: true });
+    if (!queue) return interaction.reply({ content: "❌ Non c'è nulla in pausa.", flags: MessageFlags.Ephemeral });
     queue.player.unpause();
     interaction.reply("▶️ Riproduzione ripresa!");
   }
@@ -337,7 +358,7 @@ client.on("interactionCreate", async (interaction) => {
   else if (commandName === "queue") {
     const queue = getQueue(guildId);
     if (!queue || queue.songs.length === 0) {
-      return interaction.reply({ content: "📭 La coda è vuota.", ephemeral: true });
+      return interaction.reply({ content: "📭 La coda è vuota.", flags: MessageFlags.Ephemeral });
     }
 
     const list = queue.songs
@@ -356,7 +377,7 @@ client.on("interactionCreate", async (interaction) => {
   else if (commandName === "nowplaying") {
     const queue = getQueue(guildId);
     if (!queue || queue.songs.length === 0) {
-      return interaction.reply({ content: "❌ Non c'è nulla in riproduzione.", ephemeral: true });
+      return interaction.reply({ content: "❌ Non c'è nulla in riproduzione.", flags: MessageFlags.Ephemeral });
     }
 
     const song = queue.songs[0];
